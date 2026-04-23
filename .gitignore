@@ -1,0 +1,6 @@
+.claude
+.pw-profile
+.tmp
+node_modules
+posts.json
+.env
