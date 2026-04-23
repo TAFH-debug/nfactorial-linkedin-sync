@@ -10,7 +10,7 @@
  *   npm run scrape -- -n 25
  */
 
-import { writeFileSync } from "node:fs";
+import { writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Locator, type Page } from "playwright";
 import dotenv from "dotenv";
@@ -53,10 +53,13 @@ export interface ScrapedPost {
 interface Args {
     num: number;
     out: string;
+    headful: boolean;
 }
 
+const STATE_PATH = resolve("linkedin-state.json");
+
 function parseArgs(argv: string[]): Args {
-    const out: Args = { num: 10, out: "posts.json" };
+    const out: Args = { num: 10, out: "posts.json", headful: false };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         switch (a) {
@@ -64,6 +67,7 @@ function parseArgs(argv: string[]): Args {
             case "--num": out.num = Number(argv[++i] ?? 10); break;
             case "-o":
             case "--out": out.out = String(argv[++i]); break;
+            case "--headful": out.headful = true; break;
         }
     }
     return out;
@@ -195,7 +199,7 @@ async function extractPosts(page: Page, selectors: string[], want: number): Prom
 
 // ----- Login -----
 
-async function signIn(page: Page, email: string, password: string): Promise<boolean> {
+async function signIn(page: Page, email: string, password: string, headful: boolean): Promise<boolean> {
     await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
     await page.locator('input[name="session_key"], input#username').first().fill(email);
     await page.locator('input[name="session_password"], input#password').first().fill(password);
@@ -205,6 +209,18 @@ async function signIn(page: Page, email: string, password: string): Promise<bool
     ]);
     // LinkedIn sometimes lands on an intermediate page; give it a moment.
     await page.waitForTimeout(3500);
+
+    // Checkpoint / CAPTCHA — only solvable interactively.
+    if (page.url().includes("/checkpoint/")) {
+        if (!headful) return false;
+        console.error(
+            "[!] LinkedIn checkpoint detected. Solve it in the browser window;\n"
+            + "    waiting up to 3 minutes for redirect to the feed...",
+        );
+        try {
+            await page.waitForURL((u) => !String(u).includes("/checkpoint/"), { timeout: 180_000 });
+        } catch { /* timeout */ }
+    }
     return isLoggedIn(page);
 }
 
@@ -218,26 +234,39 @@ async function run(args: Args): Promise<number> {
         return 2;
     }
 
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({ headless: !args.headful });
+    const hasState = existsSync(STATE_PATH);
     const ctx = await browser.newContext({
         userAgent: UA,
         locale: "en-US",
         viewport: { width: 1366, height: 900 },
+        ...(hasState ? { storageState: STATE_PATH } : {}),
     });
     const page = await ctx.newPage();
 
     try {
-        console.error("[1/4] Signing in...");
-        const ok = await signIn(page, email, password);
-        if (!ok) {
+        let loggedIn = false;
+        if (hasState) {
+            console.error("[1/4] Reusing saved session...");
+            await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
+            await page.waitForTimeout(2000);
+            loggedIn = isLoggedIn(page);
+            if (!loggedIn) console.error("       saved session invalid, falling back to login.");
+        }
+        if (!loggedIn) {
+            console.error(`[1/4] Signing in (${args.headful ? "headful" : "headless"})...`);
+            loggedIn = await signIn(page, email, password, args.headful);
+        }
+        if (!loggedIn) {
             console.error(
                 `ERROR: sign-in failed, current URL: ${page.url()}\n`
-                + "       LinkedIn likely served a checkpoint/CAPTCHA for this headless session.\n"
-                + "       Options: use a different IP (VPN), retry later, or run the browser\n"
-                + "       headful once to solve the challenge.",
+                + "       LinkedIn served a checkpoint/CAPTCHA for this IP.\n"
+                + "       Run once with --headful to solve it; cookies get saved to\n"
+                + `       ${STATE_PATH} and reused on subsequent headless runs.`,
             );
             return 3;
         }
+        await ctx.storageState({ path: STATE_PATH });
 
         console.error(`[2/4] Navigating: ${POSTS_URL}`);
         await page.goto(POSTS_URL, { waitUntil: "domcontentloaded" });

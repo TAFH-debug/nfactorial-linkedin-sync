@@ -3,4 +3,5 @@
 .tmp
 node_modules
 posts.json
+linkedin-state.json
 .env

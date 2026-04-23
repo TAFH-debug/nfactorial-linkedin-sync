@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "scrape": "tsx scraper.ts",
+    "login": "tsx scraper.ts --headful -n 1",
     "upload": "tsx upload-framer.ts",
     "sync": "tsx sync.ts",
     "postinstall": "playwright install chromium"
