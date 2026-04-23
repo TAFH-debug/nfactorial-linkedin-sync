@@ -227,15 +227,20 @@ async function signIn(page: Page, email: string, password: string, headful: bool
 // ----- Main -----
 
 async function run(args: Args): Promise<number> {
-    const email = process.env["LINKEDIN_EMAIL"];
-    const password = process.env["LINKEDIN_PASSWORD"];
-    if (!email || !password) {
-        console.error("ERROR: LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set (via .env or environment).");
-        return 2;
+    const hasState = existsSync(STATE_PATH);
+
+    // Credentials only needed when we have no saved session.
+    if (!hasState || args.headful) {
+        const email = process.env["LINKEDIN_EMAIL"];
+        const password = process.env["LINKEDIN_PASSWORD"];
+        if (!email || !password) {
+            console.error("ERROR: no saved session and LINKEDIN_EMAIL/LINKEDIN_PASSWORD are not set.\n"
+                + "       Run `npm run login` once with credentials in .env to create linkedin-state.json.");
+            return 2;
+        }
     }
 
     const browser = await chromium.launch({ headless: !args.headful });
-    const hasState = existsSync(STATE_PATH);
     const ctx = await browser.newContext({
         userAgent: UA,
         locale: "en-US",
@@ -245,32 +250,40 @@ async function run(args: Args): Promise<number> {
     const page = await ctx.newPage();
 
     try {
-        let loggedIn = false;
-        if (hasState) {
-            console.error("[1/4] Reusing saved session...");
-            await page.goto("https://www.linkedin.com/feed/", { waitUntil: "domcontentloaded" });
-            await page.waitForTimeout(2000);
-            loggedIn = isLoggedIn(page);
-            if (!loggedIn) console.error("       saved session invalid, falling back to login.");
-        }
-        if (!loggedIn) {
+        if (!hasState || args.headful) {
             console.error(`[1/4] Signing in (${args.headful ? "headful" : "headless"})...`);
-            loggedIn = await signIn(page, email, password, args.headful);
-        }
-        if (!loggedIn) {
-            console.error(
-                `ERROR: sign-in failed, current URL: ${page.url()}\n`
-                + "       LinkedIn served a checkpoint/CAPTCHA for this IP.\n"
-                + "       Run once with --headful to solve it; cookies get saved to\n"
-                + `       ${STATE_PATH} and reused on subsequent headless runs.`,
+            const ok = await signIn(
+                page,
+                process.env["LINKEDIN_EMAIL"]!,
+                process.env["LINKEDIN_PASSWORD"]!,
+                args.headful,
             );
-            return 3;
+            if (!ok) {
+                console.error(
+                    `ERROR: sign-in failed, current URL: ${page.url()}\n`
+                    + "       LinkedIn served a checkpoint/CAPTCHA for this IP.\n"
+                    + "       Run `npm run login` on a machine with a display to solve it,\n"
+                    + `       then copy ${STATE_PATH} to this machine.`,
+                );
+                return 3;
+            }
+            await ctx.storageState({ path: STATE_PATH });
+            console.error(`       saved session -> ${STATE_PATH}`);
+        } else {
+            console.error("[1/4] Using saved session (skipping login)...");
         }
-        await ctx.storageState({ path: STATE_PATH });
 
         console.error(`[2/4] Navigating: ${POSTS_URL}`);
         await page.goto(POSTS_URL, { waitUntil: "domcontentloaded" });
         await page.waitForTimeout(2500);
+
+        if (!isLoggedIn(page)) {
+            console.error(
+                `ERROR: saved session is stale (redirected to ${page.url()}).\n`
+                + `       Delete ${STATE_PATH} and run \`npm run login\` again.`,
+            );
+            return 3;
+        }
 
         console.error(`[3/4] Loading (selector: ${POST_SELECTORS[0]})...`);
         await scrollToLoad(page, POST_SELECTORS, args.num);

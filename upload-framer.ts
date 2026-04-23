@@ -20,6 +20,9 @@
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
     connect,
     type FieldDataEntryInput,
@@ -36,7 +39,7 @@ assert(projectUrl, "EXAMPLE_PROJECT_URL environment variable is required");
 
 const collectionName = process.env["COLLECTION_NAME"] ?? "Blog";
 const postsPath = process.env["POSTS_JSON"]
-    ?? path.join(import.meta.dirname, "posts.json");
+    ?? path.join(__dirname, "posts.json");
 const author = process.env["AUTHOR"] ?? "nFactorial School";
 const authorPhoto = process.env["AUTHOR_PHOTO"] ?? "";
 const draft = (process.env["DRAFT"] ?? "false").toLowerCase() === "true";
