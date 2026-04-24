@@ -44,6 +44,7 @@ const author = process.env["AUTHOR"] ?? "nFactorial School";
 const authorPhoto = process.env["AUTHOR_PHOTO"] ?? "";
 const draft = (process.env["DRAFT"] ?? "false").toLowerCase() === "true";
 const dryRun = (process.env["DRY_RUN"] ?? "").toLowerCase() === "true";
+const skipPublish = (process.env["SKIP_PUBLISH"] ?? "").toLowerCase() === "true";
 
 // ----- Types mirroring the JSON produced by scraper.py -----
 
@@ -290,6 +291,13 @@ async function main() {
         `Uploaded ${items.length} item(s) to "${collection.name}"`
         + ` (merged ${items.filter((i) => i.id).length}, new ${items.filter((i) => !i.id).length}).`,
     );
+
+    if (skipPublish) {
+        console.log("SKIP_PUBLISH=true — skipping publish. Changes saved as draft in Framer.");
+        return;
+    }
+    await step("publish", () => framer.publish());
+    console.log("Published to live site.");
 }
 
 await main();
