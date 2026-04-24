@@ -209,6 +209,16 @@ const rows: Row[] = posts.map((p) => {
 
 // ----- Upload -----
 
+async function step<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (err: any) {
+        console.error(`ERROR at step "${label}":`, err?.code ?? "", err?.message ?? err);
+        if (err?.cause) console.error("  cause:", err.cause);
+        throw err;
+    }
+}
+
 async function main() {
     if (dryRun) {
         console.log(JSON.stringify(rows, null, 2));
@@ -216,9 +226,9 @@ async function main() {
         return;
     }
 
-    using framer = await connect(projectUrl!);
+    using framer = await step("connect", () => connect(projectUrl!));
 
-    const collections = await framer.getCollections();
+    const collections = await step("getCollections", () => framer.getCollections());
     console.log(
         `Available collections: ${collections.map((c) => `"${c.name}"`).join(", ") || "(none)"}`,
     );
@@ -229,7 +239,7 @@ async function main() {
     );
     console.log(`Target: "${collection.name}" (id=${collection.id})`);
 
-    const fields = await collection.getFields();
+    const fields = await step("getFields", () => collection.getFields());
     const byName = new Map(
         fields.map((f) => [f.name.toLowerCase(), { id: f.id, type: (f as any).type as string, name: f.name }]),
     );
@@ -245,7 +255,7 @@ async function main() {
         console.log(`WARN: no matching Framer field for: ${unmappedColumns.join(", ")}`);
     }
 
-    const existingItems = await collection.getItems();
+    const existingItems = await step("getItems (before)", () => collection.getItems());
     console.log(`Items in collection before: ${existingItems.length}`);
     const slugToId = new Map(existingItems.map((it) => [it.slug, it.id]));
 
@@ -268,10 +278,13 @@ async function main() {
         };
     });
 
-    await collection.addItems(items as any);
+    if ((process.env["DEBUG_PAYLOAD"] ?? "").toLowerCase() === "true") {
+        console.log("Payload:", JSON.stringify(items, null, 2));
+    }
 
-    // Verify by re-reading the collection.
-    const after = await collection.getItems();
+    await step("addItems", () => collection.addItems(items as any));
+
+    const after = await step("getItems (after)", () => collection.getItems());
     console.log(`Items in collection after:  ${after.length} (delta +${after.length - existingItems.length})`);
     console.log(
         `Uploaded ${items.length} item(s) to "${collection.name}"`
